@@ -1,3 +1,8 @@
+from PIL import Image
+import numpy as np
+import hashlib
+from hashlib import sha1  # usado apenas para gerar o hash
+
 s_box = (
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
     0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
@@ -64,36 +69,25 @@ def rotWord(word, n):
 def subWord(word): return [s_box[pos] for pos in word]
 
 
-def xor_rcon(word, rcon):
-    return [hex(int(word[i], 16) ^ int(rcon[i], 16)) for i in range(len(word))]
-
-
-def xorWord(word1, word2):
-    # faz xor entre duas palavras
-    return [hex(int(word1[i], 16) ^ int(word2[i], 16)) for i in
-            range(len(word1))]
-
-
-def palavra_xor_rcon(palavra, pos): return [
+def xor_rcon(palavra, pos): return [
     palavra[0] ^ r_con[pos % len(r_con)]] + palavra[1:]
 
 
-def palavra_xor_outra_palavra(palavra, outra_palavra):
+def xorWord(palavra, palavra2):
     aux = [
-        i ^ j for i, j in zip(palavra, outra_palavra)]
+        i ^ j for i, j in zip(palavra, palavra2)]
     return aux
 
 
 def geraSubChaves(key, rodadas):
     sub_chaves = []
     sub_chaves = [key[i:i+4] for i in range(0, 16, 4)]
-    print(sub_chaves)
     for i in range(4, (4*rodadas)+4):
         if i % 4 == 0:
             newWord = rotWord(sub_chaves[i-1], 1)
             newWord = subWord(newWord)
-            newWord = palavra_xor_rcon(newWord, i//4)
-        newWord = palavra_xor_outra_palavra(
+            newWord = xor_rcon(newWord, i//4)
+        newWord = xorWord(
             newWord, sub_chaves[i-4])
         sub_chaves.append(newWord)
 
@@ -104,25 +98,178 @@ def hex_string_to_int_list(hex_string):
     return [int(hex_string[i:i+2], 16) for i in range(0, len(hex_string), 2)]
 
 
-# "2b7e151628aed2a6abf7158809cf4f3c"
-key = ['0x2b', '0x7e', '0x15', '0x16', '0x28', '0xae', '0xd2', '0xa6',
-       '0xab', '0xf7', '0x15', '0x88', '0x09', '0xcf', '0x4f', '0x3c']
-key = [int(value, 16) for value in key]
-print(key)
+def sub_bytes(state):
+    return [s_box[state[i]] for i in range(len(state))]
 
 
-sub_chaves = geraSubChaves(key, 10)
-print(sub_chaves)
+def shift_rows(state):
+    new_state = []
+    rows = [rotWord(state[i*4:(i*4)+4], i) for i in range(4)]
+    for row in rows:
+        new_state += row
+
+    return new_state
 
 
-# ver em hexa
-i = 0
-for linha in sub_chaves:
-    print(i)
-    i = i + 1
-    linha_hex = [hex(valor)[2:].zfill(2) for valor in linha]
-    print(linha_hex)
+def mix_columns(state, matrix):
+
+    new_state = [[0] * 4 for _ in range(4)]
+    for i in range(4):
+        new_state[i] = [0] * 4
+        for j in range(4):
+            new_state[i][j] = (
+                galois_mult(state[0][j], matrix[i][0]) ^
+                galois_mult(state[1][j], matrix[i][1]) ^
+                galois_mult(state[2][j], matrix[i][2]) ^
+                galois_mult(state[3][j], matrix[i][3])
+            )
+    # junta tudo
+    new_state = [new_state[i][j] for i in range(4) for j in range(4)]
+    return new_state
+
+
+def galois_mult(a, b):
+    p = 0
+    for i in range(8):
+        if b & 1 == 1:
+            p ^= a
+        hi_bit_set = a & 0x80
+        a <<= 1
+        if hi_bit_set == 0x80:
+            a ^= 0x1b  # 0x1b is the irreducible polynomial for GF(2^8)
+        b >>= 1
+    return p % 256
+
 
 # add round key
 def add_round_key(state, sub_chave):
     return [state[i] ^ sub_chave[i] for i in range(len(state))]
+
+
+def Compressar(lista): return [item for sublista in lista for item in sublista]
+
+
+def matriz_Transposta(matriz): return Compressar(
+    [[matriz[(4*j)+i] for j in range(4)] for i in range(4)])
+
+
+def chave_rodada(subchaves, rodada): return matriz_Transposta(
+    Compressar(subchaves[rodada*4:(rodada*4)+4]))
+
+
+def aes_C(mensagem, subchaves, rodadas):
+    mixing_matrix = [
+        [2, 3, 1, 1],
+        [1, 2, 3, 1],
+        [1, 1, 2, 3],
+        [3, 1, 1, 2]
+    ]
+    result = mensagem
+    chave = chave_rodada(subchaves, 0)
+    result = add_round_key(result, chave)
+
+    for i in range(1, rodadas):
+        result = sub_bytes(result)
+        result = shift_rows(result)
+        result = [result[j:j+4] for j in range(0, 16, 4)]
+        result = mix_columns(result, mixing_matrix)
+        chave = chave_rodada(subchaves, i)
+        result = add_round_key(result, chave)
+
+    result = sub_bytes(result)
+    result = shift_rows(result)
+    chave = chave_rodada(subchaves, rodadas)
+    result = add_round_key(result, chave)
+
+    return result
+
+
+def criar_blocos_bmp(imgname):
+    img = Image.open(imgname)
+    imgInBytes = list(img.tobytes())
+    blocos = []
+    resto = []
+    for i in range(0, len(imgInBytes), 16):
+        novo_bloco = imgInBytes[i:i+16]
+        if len(novo_bloco) < 16:
+            resto = novo_bloco
+            break
+        blocos.append(novo_bloco.copy())
+    return (blocos, resto, img.size)
+
+
+def ctr_mode(blocos, sub_chaves, rodadas):
+    counter = [0x0] * 16
+
+    blocos_cifrados = []
+    for bloco in blocos:
+        res = matriz_Transposta(
+            aes_C(matriz_Transposta(counter.copy()), sub_chaves, rodadas))
+        blocos_cifrados.append(xorWord(res, bloco))
+        for i in reversed(range(len(counter))):
+
+            if counter[i] == 0xff:
+                counter[i] = 0x0
+            else:
+                counter[i] += 1
+                break
+
+    return blocos_cifrados
+
+
+def montar_imagem(img, resto, tam, name):
+    d = img + resto
+    d = bytes(d)
+    im = Image.frombytes(mode="RGB", size=tam, data=d)
+    im.show()
+    im.save(name + '.bmp')
+    return d
+
+
+def calcular_hash_sha1(nome_do_arquivo):
+    sha1_hash = hashlib.sha1()
+    with open(nome_do_arquivo, "rb") as file:
+        while True:
+            data = file.read(65536)  # Leitura em pedaços de 64 KB
+            if not data:
+                break
+            sha1_hash.update(data)
+    return sha1_hash.hexdigest()
+
+
+if __name__ == '__main__':
+    while True:
+        option = input("Digite 1 para cifrar e 2 para decifrar: ")
+        imgName = input("Digite o nome da imagem(ex: tux.bmp): ")
+        nRodadas = int(input("Digite o numero de rodadas: "))
+        key = input(
+            "Digite a chave(16 Bytes separados por espaço(ex: 0x2b 0x2b 0x2b)): ").split()
+        key_hex = key.copy()
+        key = [int(value, 16) for value in key]
+        print("Processando...")
+        if len(key) != 16:
+            print("Chave invalida")
+            continue
+        if option == '1':
+            sub_chaves = geraSubChaves(key, nRodadas)
+            blocos, resto, size = criar_blocos_bmp(imgName)
+            blocos_cifrados = ctr_mode(blocos, sub_chaves, nRodadas)
+            blocao = Compressar(blocos_cifrados)
+            ImgCifrada = montar_imagem(blocao, resto, size, "result")
+            hash = calcular_hash_sha1("result.bmp")
+            output = open("hash.txt", "w")
+            output.write("chave: " + ' '.join(key_hex) + "\n")
+            output.write("nRodadas: " + str(nRodadas) + "\n")
+            output.write("hash: " + hash + "\n")
+        else:
+            sub_chaves = geraSubChaves(key, nRodadas)
+            blocos, resto, size = criar_blocos_bmp(imgName)
+            blocos_decifrados = ctr_mode(blocos, sub_chaves, nRodadas)
+            blocao = Compressar(blocos_decifrados)
+            ImgDecifrada = montar_imagem(blocao, resto, size, "decifrado")
+        break
+
+# # "2b7e151628aed2a6abf7158809cf4f3c"
+# 0x97 0x78 0xb4 0xc8 0xb3 0x16 0x75 0x2 0x6e 0xd8 0xfe
+# key = ['0x2b', '0x7e', '0x15', '0x16', '0x28', '0xae', '0xd2', '0xa6', '0xab', '0xf7', '0x15', '0x88', '0x09', '0xcf', '0x4f', '0x3c']
+# 0x2b 0x7e 0x15 0x16 0x28 0xae 0xd2 0xa6 0xab 0xf7 0x15 0x88 0x09 0xcf 0x4f 0x3c

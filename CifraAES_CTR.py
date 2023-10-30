@@ -166,22 +166,18 @@ def aes_C(mensagem, subchaves, rodadas):
 
 
 def criar_blocos_bmp(imgname, isImg):
+    size = 0
+    imgInBytes = []
+    blocos = []
+    resto = []
     if isImg:
         img = Image.open(imgname)
         imgInBytes = list(img.tobytes())
         size = img.size
     else:
-        # txt
-        imgInBytes = []
         with open(imgname, "rb") as file:
-            while True:
-                data = file.read(65536)
-                size = len(data)
-                if not data:
-                    break
-                imgInBytes += list(data)
-    blocos = []
-    resto = []
+            imgInBytes = list(file.read())
+ 
     for i in range(0, len(imgInBytes), 16):
         novo_bloco = imgInBytes[i:i+16]
         if len(novo_bloco) < 16:
